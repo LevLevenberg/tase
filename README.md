@@ -10,6 +10,10 @@ includes:
 cd ./ANSIBLE 
 chmod +x run.sh && ./run.sh
 
+docker ps
+
+visit http://localhost:3000
+
 # BASH
 includes:
 - extract.sh
