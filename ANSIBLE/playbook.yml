@@ -1,0 +1,15 @@
+- name: Run with inline v2 compose
+  hosts: localhost
+  connection: local
+  gather_facts: yes
+  tasks:
+    - community.docker.docker_compose:
+          project_src: ./
+          state: absent
+    - community.docker.docker_compose:
+        project_name: lev
+        project_src: ./
+      register: docker_compose_start
+
+    - ansible.builtin.debug:
+        var: docker_compose_start

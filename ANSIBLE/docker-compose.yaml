@@ -1,0 +1,37 @@
+version: "3.7"
+
+services:
+  client:
+    container_name: client
+    build:
+      context: ./client
+    command: npm start
+    restart: always
+    ports:
+        - 3000:3000
+    volumes:
+      - "./usr/src/app/node_modules"
+      - "./client:/usr/src/app"
+
+  server:
+    container_name: server
+    build:
+      context: ./server
+    environment: 
+      PORT: 3001
+      UNIQUE_IDENTIFIER: "0fcd48f9-7498-4641-80a2-b9192cd6fd5d"
+    command: nodemon index.js
+    restart: always
+    ports:
+      - 3001:3001
+    volumes:
+      - "./usr/src/app/node_modules"
+      - "./server:/usr/src/app"
+    depends_on: 
+      - mongo
+
+  mongo:
+    image: mongo
+    container_name: mongo
+    volumes: 
+      - "~/mongo/data:/data/db"

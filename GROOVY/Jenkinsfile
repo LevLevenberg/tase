@@ -1,0 +1,186 @@
+import groovy.json.JsonOutput
+import java.util.Optional
+import hudson.tasks.test.AbstractTestResultAction
+import hudson.model.Actionable
+import hudson.tasks.junit.CaseResult
+
+def tag = ""
+def image
+def author = ""
+def message = ""
+def buildColor
+def buildStatus
+def currentStep
+def buildEnv
+
+
+/// !!! assuming a valid slack settings in jenkins ... ( channel, token ... )
+def notifySlack = {
+    def jobName = "${env.JOB_NAME}"
+    jobName = jobName.getAt(0..(jobName.indexOf('/') - 1))
+
+    def attachments = [
+        [
+            title: "${jobName}, build #${env.BUILD_NUMBER}",
+            title_link: "${env.BUILD_URL}",
+            color: "${buildColor}",
+            text: "${currentStep}",
+            "mrkdwn_in": ["fields"],
+            fields: [
+                [
+                    title: "Branch",
+                    value: "${env.GIT_BRANCH}",
+                    short: true
+                ],
+                [
+                    title: "Last Commit",
+                    value: "${message}",
+                    short: false
+                ],
+                [
+                    title: "Author",
+                    value: "${author}",
+                    short: false
+                ]
+            ]
+        ]
+    ]
+
+    def jenkinsIcon = 'https://wiki.jenkins-ci.org/download/attachments/2916393/logo.png'
+    def payload = [
+        username: "Jenkins",
+        icon_url: jenkinsIcon,
+        attachments: attachments
+    ]
+
+    slackSend payload
+}
+
+
+
+
+def getJenkinsJobs = {
+    def runningBuilds = Jenkins.instance.getItems().collect { job->
+            job.builds.findAll { it.getResult().equals(null) }
+        }.flatten()
+
+    return runningBuilds;
+}
+
+def getBuildEnv = {
+     switch("${env.JOB_BASE_NAME}"){
+        case 'dev':
+              return "development"
+        case 'staging':
+                return "staging"
+        case 'master':
+                return "production"
+    }
+}
+
+def getTag = {
+    if("${env.JOB_BASE_NAME}" == 'dev'){
+        return "latest"
+    }else{
+        def tag = sh(script: "git rev-parse --short HEAD | xargs", returnStdout: true).trim()
+        return "$tag"
+    }
+}
+
+def getLastCommitMessage = {
+    def message = sh(returnStdout: true, script: 'git log -1 --pretty=%B').trim()
+    return "$message"
+}
+
+def getGitAuthor = {
+    def commit = sh(returnStdout: true, script: 'git rev-parse HEAD')
+    def author = sh(returnStdout: true, script: "git --no-pager show -s --format='%an' ${commit}").trim();
+    return "$author" 
+}
+
+def getDockerRepo = {
+     switch("${env.JOB_BASE_NAME}"){
+        case 'dev':
+              return "levlevenberg/dev-demo" 
+        case 'staging':
+                return "levlevenberg/stage-demo"
+        case 'master':
+                return "levlevenberg/prod-demo"
+    }   
+
+    // note: 
+    // in real life, repo name, creds etc will be stored as credentials
+    // and used by cred id ... 
+}
+
+def prepareEnv = {
+    message = getLastCommitMessage()
+    buildEnv = getBuildEnv()
+    author = getGitAuthor()
+    tag = getTag()
+}
+
+pipeline {
+    agent any
+    tools {nodejs "nodejs"}
+    environment{
+            repository = getDockerRepo()
+    }
+    stages {
+        stage('Preparation'){
+            steps {
+                script {
+
+                    checkout scm
+                    prepareEnv()
+                    buildColor = currentBuild.result == null ? "good" : "warning"
+                    buildStatus = currentBuild.result == null ? "Success" : currentBuild.result
+                    currentStep = "Build Started"
+                    notifySlack()
+                }
+            }
+
+        }
+
+        stage('Build'){
+            steps {
+                script {
+                        image = docker.build("$repository:$tag", "--build-arg env=${buildEnv} --build-arg version=${tag} .")
+                }
+            }
+        }
+
+        stage('Deploy Image'){
+            steps {
+                script {
+                    image.push()
+                }
+            }
+        }
+        stage('CleanUp'){
+            steps {
+                script{
+                    sh "docker rmi $$repository:$tag"
+                }
+                script{
+                    buildColor = currentBuild.result == null ? "good" : "warning"
+                    buildStatus = currentBuild.result == null ? "Success" : currentBuild.result
+                    currentStep = "Build deployed successfuly "
+                    notifySlack()
+                }
+
+            }
+        }
+    }
+
+    post {
+        failure {
+            script{
+                buildColor = "danger"
+                debuildStatus = "Failed"
+                currentStep = "Build Failed"
+                notifySlack()
+            }
+        }
+    }
+}
